@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+
+import ssl
+import socket
+import argparse
+from datetime import datetime
+from termcolor import colored
+
+
+class Certificate:
+    def __init__(self):
+        self.issuer = ""
+        self.subject = ""
+        self.alternativeNames = []
+        self.notBefore = datetime.today()
+        self.notAfter = datetime.today()
+
+    def __repr__(self):
+        return "<Certificate subject:\'{0}\' alternativeNames:\'{1}\' issuer:\'{2}\' notBefore:\'{3}\' notAfter:\'{4}\'>".format(
+            self.subject, self.alternativeNames, self.issuer, self.notBefore, self.notAfter
+        )
+
+
+class CertGrabber:
+    def __init__(self):
+        self.context = ssl.SSLContext()
+        self.context.verify_mode = ssl.CERT_REQUIRED
+        self.context.check_hostname = False
+        self.context.load_default_certs()
+
+    def get_certificate(self, domain, server):
+
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        ssl_sock = self.context.wrap_socket(s, server_hostname=domain)
+        ssl_sock.connect((server, 443))
+
+        raw_cert = ssl_sock.getpeercert()
+        # print("Cipher: ", ssl_sock.cipher())
+        # print("Compression: ", ssl_sock.compression())
+        # print(raw_cert)
+        ssl_sock.close()
+
+        certificate = Certificate()
+        certificate.issuer = self.parse_issuer(raw_cert['issuer'])
+        certificate.subject = self.parse_subject(raw_cert['subject'])
+        certificate.alternativeNames = self.parse_alternative_names(raw_cert['subjectAltName'])
+        certificate.notBefore = self.parse_date(raw_cert['notBefore'])
+        certificate.notAfter = self.parse_date(raw_cert['notAfter'])
+
+        return certificate
+
+    @staticmethod
+    def parse_issuer(issuer):
+        issuer_props = {entry[0][0]: entry[0][1] for entry in issuer}
+        return "{0} - {1}".format(issuer_props['commonName'], issuer_props['organizationName'])
+
+    @staticmethod
+    def parse_subject(subject):
+        subject_props = {entry[0][0]: entry[0][1] for entry in subject}
+        return subject_props['commonName']
+
+    @staticmethod
+    def parse_alternative_names(alternative_names):
+        return [entry[1] for entry in alternative_names]
+
+    @staticmethod
+    def parse_date(cert_date):
+        return datetime.strptime(cert_date, "%b %d %H:%M:%S %Y %Z") #Jul  4 00:00:00 2017 GMT
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Test the SSL certificates for a domain")
+    parser.add_argument('domain', type=str, help='the domain to test for ssl certificates')
+    parser.add_argument('--server', type=str, dest='server', default=False,
+                        help='the server name or ip to connect to for testing')
+    args = parser.parse_args()
+    if args.server is False:
+        args.server = args.domain
+
+    return args
+
+
+def main():
+
+    args = parse_args()
+
+    cert_grabber = CertGrabber()
+    certificate = cert_grabber.get_certificate(args.domain, args.server)
+
+    # print(colored('grey', 'grey'))
+    # print(colored('red', 'red'))
+    # print(colored('green', 'green'))
+    # print(colored('yellow', 'yellow'))
+    # print(colored('blue', 'blue'))
+    # print(colored('magenta', 'magenta'))
+    # print(colored('cyan', 'cyan'))
+    # print(colored('white', 'white'))
+
+    alternative_names = ""
+    for alt_name in certificate.alternativeNames:
+        color = 'green' if alt_name == args.domain else 'cyan'
+        alternative_names += colored(alt_name, color) + "; "
+
+    print(
+        colored('Subject:', 'white'),
+        colored(certificate.subject, 'green' if certificate.subject == args.domain else 'cyan')
+    )
+    print(
+        colored('Alternative-Names:', 'white'),
+        alternative_names
+    )
+    print(
+        colored('Issuer:', 'white'),
+        colored(certificate.issuer, 'cyan')
+    )
+    print(
+        colored('Not-Before:', 'white'),
+        colored(certificate.notBefore.strftime("%d %b %Y"), 'cyan')
+    )
+    print(
+        colored('Not-After:', 'white'),
+        colored(certificate.notAfter.strftime("%d %b %Y"), 'cyan')
+    )
+
+if __name__ == "__main__":
+    main()
