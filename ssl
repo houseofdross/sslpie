@@ -3,6 +3,9 @@
 import ssl
 import socket
 import argparse
+import pprint
+from cryptography import x509
+from cryptography.hazmat.backends import default_backend
 from datetime import datetime
 from termcolor import colored
 
@@ -24,48 +27,59 @@ class Certificate:
 class CertGrabber:
     def __init__(self):
         self.context = ssl.SSLContext()
-        self.context.verify_mode = ssl.CERT_REQUIRED
+        self.context.verify_mode = ssl.CERT_OPTIONAL
         self.context.check_hostname = False
         self.context.load_default_certs()
 
     def get_certificate(self, domain, server):
 
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        ssl_sock = self.context.wrap_socket(s, server_hostname=domain)
-        ssl_sock.connect((server, 443))
+        context = ssl._create_stdlib_context()
+        with ssl.create_connection((server, 443)) as sock:
+            with context.wrap_socket(sock, server_hostname=domain) as sslsock:
+                der_cert = sslsock.getpeercert(True)
 
-        raw_cert = ssl_sock.getpeercert()
-        # print("Cipher: ", ssl_sock.cipher())
-        # print("Compression: ", ssl_sock.compression())
-        # print(raw_cert)
-        ssl_sock.close()
+        pem_cert = ssl.DER_cert_to_PEM_cert(der_cert)
+        cert = x509.load_pem_x509_certificate(pem_cert.encode(), default_backend())
 
         certificate = Certificate()
-        certificate.issuer = self.parse_issuer(raw_cert['issuer'])
-        certificate.subject = self.parse_subject(raw_cert['subject'])
-        certificate.alternativeNames = self.parse_alternative_names(raw_cert['subjectAltName'])
-        certificate.notBefore = self.parse_date(raw_cert['notBefore'])
-        certificate.notAfter = self.parse_date(raw_cert['notAfter'])
+        certificate.issuer = self.parse_issuer(cert.issuer)
+        certificate.subject = self.parse_subject(cert.subject)
+        certificate.notBefore = cert.not_valid_before
+        certificate.notAfter = cert.not_valid_after
+        certificate.alternativeNames = self.parse_alternative_names(cert.extensions)
+
+        # print("Certificate: ", certificate)
+        # version
+        # serial
+        # serial_number
+        # public_key
+        # signature_hash_algorithm
+        # signature_algorithm_oid
+        # signature
+        # tbs_certificate_bytes
+        # extensions
 
         return certificate
 
     @staticmethod
     def parse_issuer(issuer):
-        issuer_props = {entry[0][0]: entry[0][1] for entry in issuer}
+        issuer_props = {entry.oid._name: entry.value for entry in issuer}
         return "{0} - {1}".format(issuer_props['commonName'], issuer_props['organizationName'])
 
     @staticmethod
     def parse_subject(subject):
-        subject_props = {entry[0][0]: entry[0][1] for entry in subject}
-        return subject_props['commonName']
+        return {entry.oid._name: entry.value for entry in subject}['commonName']
 
     @staticmethod
-    def parse_alternative_names(alternative_names):
-        return [entry[1] for entry in alternative_names]
+    def parse_alternative_names(cert_extensions):
+        return [alt_name.value
+                for extension in cert_extensions if extension.oid.dotted_string == '2.5.29.17'
+                for alt_name in extension.value]
 
-    @staticmethod
-    def parse_date(cert_date):
-        return datetime.strptime(cert_date, "%b %d %H:%M:%S %Y %Z") #Jul  4 00:00:00 2017 GMT
+
+    # @staticmethod
+    # def parse_date(cert_date):
+    #     return datetime.strptime(cert_date, "%b %d %H:%M:%S %Y %Z") #Jul  4 00:00:00 2017 GMT
 
 
 def parse_args():
@@ -98,12 +112,12 @@ def main():
 
     alternative_names = ""
     for alt_name in certificate.alternativeNames:
-        color = 'green' if alt_name == args.domain else 'cyan'
+        color = 'green' if alt_name == args.domain else 'red'
         alternative_names += colored(alt_name, color) + "; "
 
     print(
         colored('Subject:', 'white'),
-        colored(certificate.subject, 'green' if certificate.subject == args.domain else 'cyan')
+        colored(certificate.subject, 'green' if certificate.subject == args.domain else 'red')
     )
     print(
         colored('Alternative-Names:', 'white'),
