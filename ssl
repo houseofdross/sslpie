@@ -4,6 +4,7 @@ import ssl
 import socket
 import argparse
 import pprint
+import fnmatch
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from datetime import datetime
@@ -112,7 +113,14 @@ def main():
 
     alternative_names = ""
     for alt_name in certificate.alternativeNames:
-        color = 'green' if alt_name == args.domain else 'red'
+        if alt_name == args.domain:
+            color = 'green'
+        # This is ultra-hacky, we should get a decoded (binary=False) cert and call
+        # ssl.match_hostname() rather than pretending unix filename matching is good enough
+        elif fnmatch.fnmatch(args.domain, alt_name):
+            color = 'yellow'
+        else:
+            color = 'red'
         alternative_names += colored(alt_name, color) + "; "
 
     print(
